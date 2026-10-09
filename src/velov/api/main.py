@@ -18,10 +18,13 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 import joblib
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+import numpy as np
+import pandas as pd
 
 from velov.api.schemas import PredictionRequest, PredictionResponse  # noqa: F401
 from velov.features import FEATURES, add_features  # noqa: F401
@@ -63,8 +66,18 @@ app = FastAPI(title="Vélo'v availability API", version="1.0.0", lifespan=lifesp
 
 # TODO 5 [Should] : GET /health -> {"status": "ok"}
 
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 # TODO 6 [Should] : GET /ready -> 200 + version du modèle si chargé, sinon HTTPException 503
+
+@app.get("/ready")
+def ready() -> dict[str, str]:
+    if STATE["model"] is None or STATE["metadata"] is None:
+        raise HTTPException(status_code=503, detail="Modèle non chargé")
+    return {"status": "ready", "model_version": STATE["metadata"]["model_version"]}
+
 
 
 # TODO 7 [Must] : POST /v1/predict
@@ -74,3 +87,20 @@ app = FastAPI(title="Vélo'v availability API", version="1.0.0", lifespan=lifesp
 #     (l'instant porte son fuseau : le contrat l'a validé)
 #   - 503 si le modèle n'est pas chargé
 #   Question : pourquoi importer add_features plutôt que recalculer les features ici ?
+
+@app.post("/v1/predict", response_model=PredictionResponse)
+def predict(request: PredictionRequest) -> PredictionResponse:
+    if STATE["model"] is None or STATE["metadata"] is None:
+        raise HTTPException(status_code=503, detail="Modèle non chargé")
+
+    observation = pd.DataFrame([request.model_dump()])
+    features = add_features(observation)[FEATURES]
+    prediction = float(STATE["model"].predict(features)[0])
+    predicted_bikes = float(np.clip(prediction, 0, request.capacity))
+
+    return PredictionResponse(
+        station_id=request.station_id,
+        target_timestamp=request.timestamp + timedelta(hours=1),
+        predicted_bikes=predicted_bikes,
+        model_version=STATE["metadata"]["model_version"],
+    )
