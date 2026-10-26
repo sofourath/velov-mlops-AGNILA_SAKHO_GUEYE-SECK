@@ -16,3 +16,6 @@ mlruns/
 
 # Secrets
 .env
+
+*.egg-info/
+dbt/logs/
