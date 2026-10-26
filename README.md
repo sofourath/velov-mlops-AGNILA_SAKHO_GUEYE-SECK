@@ -30,6 +30,7 @@ pip install -r requirements-dev.txt
 pip install -e .                     # rend le package velov importable
 
 python -m velov.data                 # génère data/velov_history.csv (simulateur, seed fixe)
+python -m velov.data --bronze-out data/bronze.csv  # ingestion bronze rejouable, sans doublons
 python -m velov.train                # entraîne et écrit models/model.joblib + models/metadata.json
 python -m velov.train --mlflow       # idem + journalisation MLflow (puis : mlflow ui)
 pytest                               # tests
@@ -58,7 +59,7 @@ Chaque rendu indique celles qu'il couvre et comment le vérifier.
 
 ```
 src/velov/
-  data.py          simulateur de données (remplacé par l'open data en S3, même schéma)
+  data.py          simulateur et ingestion bronze idempotente (clé station_id/timestamp)
   features.py      features partagées entraînement / API (anti training-serving skew)
   train.py         entraînement, baseline, artefact + metadata.json, option MLflow
   api/main.py      FastAPI : /health, /ready, /v1/model, /v1/predict, /v1/predict/batch
