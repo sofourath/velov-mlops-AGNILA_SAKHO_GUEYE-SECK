@@ -32,7 +32,9 @@ pip install -e .                     # rend le package velov importable
 python -m velov.data                 # génère data/velov_history.csv (simulateur, seed fixe)
 python -m velov.data --bronze-out data/bronze.csv  # ingestion bronze rejouable, sans doublons
 dbt build --project-dir dbt --profiles-dir dbt  # modèles silver/gold et contrat gold
-python -m velov.train                # entraîne et écrit models/model.joblib + models/metadata.json
+dbt seed --project-dir dbt --profiles-dir dbt  # charge la bronze dans DuckDB
+dbt run --project-dir dbt --profiles-dir dbt   # construit silver puis gold
+python -m velov.train                # lit main.velov_gold, valide Pandera, puis entraîne
 python -m velov.train --mlflow       # idem + journalisation MLflow (puis : mlflow ui)
 pytest                               # tests
 uvicorn velov.api.main:app --reload  # API sur http://127.0.0.1:8000/docs (--reload : en dev uniquement)
