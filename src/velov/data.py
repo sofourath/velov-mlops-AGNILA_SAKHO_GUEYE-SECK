@@ -31,6 +31,15 @@ import pandas as pd
 # business    : l'inverse.
 # leisure     : peu sensible aux heures de bureau, plus chargée le week-end.
 PROFILES = ("residential", "business", "leisure")
+BRONZE_KEY_COLUMNS = ("station_id", "timestamp")
+BRONZE_COLUMNS = (
+    "station_id",
+    "timestamp",
+    "capacity",
+    "bikes_available",
+    "temperature",
+    "is_raining",
+)
 
 
 def _weekday_occupancy(hour: np.ndarray, profile: str) -> np.ndarray:
@@ -109,17 +118,60 @@ def simulate(
     return pd.concat(frames, ignore_index=True)
 
 
+def ingest_bronze(data: pd.DataFrame, output_path: Path) -> pd.DataFrame:
+    """Ajoute un lot dans la zone bronze sans créer de doublons.
+
+    Une observation est identifiée par sa station et son horodatage UTC. Les
+    observations du lot courant remplacent celles portant la même clé déjà
+    présentes, ce qui permet de rejouer un lot ou de corriger une observation
+    sans multiplier les lignes.
+    """
+    missing = set(BRONZE_COLUMNS) - set(data.columns)
+    if missing:
+        raise ValueError(f"Colonnes manquantes pour l'ingestion bronze : {sorted(missing)}")
+
+    incoming = data.loc[:, BRONZE_COLUMNS].copy()
+    incoming["timestamp"] = pd.to_datetime(incoming["timestamp"], utc=True)
+    if incoming[list(BRONZE_KEY_COLUMNS)].duplicated().any():
+        incoming = incoming.drop_duplicates(subset=BRONZE_KEY_COLUMNS, keep="last")
+
+    if output_path.exists():
+        existing = pd.read_csv(output_path, parse_dates=["timestamp"])
+        existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
+        combined = pd.concat([existing.loc[:, BRONZE_COLUMNS], incoming], ignore_index=True)
+    else:
+        combined = incoming
+
+    bronze = (
+        combined.drop_duplicates(subset=BRONZE_KEY_COLUMNS, keep="last")
+        .sort_values(list(BRONZE_KEY_COLUMNS))
+        .reset_index(drop=True)
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_path.with_name(f".{output_path.name}.tmp")
+    bronze.to_csv(temporary_path, index=False)
+    temporary_path.replace(output_path)
+    return bronze
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Génère un historique Vélo'v synthétique.")
     parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--stations", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", type=Path, default=Path("data/velov_history.csv"))
+    parser.add_argument(
+        "--bronze-out",
+        type=Path,
+        help="Ajoute le lot généré à ce fichier bronze en dédupliquant station_id/timestamp.",
+    )
     args = parser.parse_args()
 
     df = simulate(days=args.days, n_stations=args.stations, seed=args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.out, index=False)
+    if args.bronze_out:
+        ingest_bronze(df, args.bronze_out)
     print(f"{len(df):,} lignes écrites dans {args.out}")
 
 
