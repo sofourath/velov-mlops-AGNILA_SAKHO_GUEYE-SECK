@@ -31,6 +31,7 @@ pip install -e .                     # rend le package velov importable
 
 python -m velov.data                 # génère data/velov_history.csv (simulateur, seed fixe)
 python -m velov.data --bronze-out data/bronze.csv  # ingestion bronze rejouable, sans doublons
+dbt build --project-dir dbt --profiles-dir dbt  # modèles silver/gold et contrat gold
 python -m velov.train                # entraîne et écrit models/model.joblib + models/metadata.json
 python -m velov.train --mlflow       # idem + journalisation MLflow (puis : mlflow ui)
 pytest                               # tests
@@ -74,3 +75,21 @@ exercices/         démo pickle (S1)
 Chaque activité indique son mode : **sans IA**, **IA déclarée** ou **IA imposée**.
 En mode IA déclarée, ajoutez dans la description de vos commits ou de votre rendu :
 outil utilisé, ce que vous lui avez demandé, ce que vous avez vérifié ou corrigé.
+
+## Modèles analytiques dbt
+
+Après l'installation des dépendances de développement, générez la zone bronze puis construisez
+les modèles depuis la racine du dépôt :
+
+```bash
+pip install -r requirements-dev.txt
+pip install -e .
+python -m velov.data --bronze-out data/bronze.csv
+dbt build --project-dir dbt --profiles-dir dbt
+```
+
+Le modèle staging lit `data/bronze.csv`, puis les modèles silver et gold exposent les observations
+nettoyées. Le modèle gold applique le contrat défini par les six colonnes de `BRONZE_COLUMNS`
+dans `src/velov/data.py`. Par défaut, dbt utilise une base DuckDB locale sous `dbt/target/`.
+Pour utiliser un autre fichier bronze, passez `--vars '{"velov_bronze_csv": "chemin/vers/bronze.csv"}'`
+à la commande `dbt build`.
