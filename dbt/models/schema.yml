@@ -3,29 +3,54 @@ version: 2
 models:
   - name: bronze_velov
     description: Données bronze Vélo'v lues depuis le CSV d'ingestion.
+
   - name: velov_silver
     description: Observations Vélo'v typées et limitées aux valeurs valides.
+
   - name: velov_gold
     description: Table Vélo'v conforme au contrat de données du projet.
+
     config:
       contract:
         enforced: true
+
     columns:
       - name: station_id
         data_type: integer
         description: Identifiant de la station.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('velov_silver')
+                field: station_id
+
       - name: timestamp
         data_type: timestamp with time zone
         description: Instant de l'observation en UTC.
+        data_tests:
+          - not_null
+
       - name: capacity
         data_type: integer
         description: Capacité totale de la station.
+        data_tests:
+          - not_null
+
       - name: bikes_available
         data_type: integer
         description: Nombre de vélos disponibles.
+        data_tests:
+          - not_null
+
       - name: temperature
         data_type: double
         description: Température en degrés Celsius.
+        data_tests:
+          - not_null
+
       - name: is_raining
         data_type: boolean
         description: Indique s'il pleut.
+        data_tests:
+          - not_null

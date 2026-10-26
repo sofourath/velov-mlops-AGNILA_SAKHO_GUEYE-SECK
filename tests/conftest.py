@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,10 +15,20 @@ from velov.train import train
 @pytest.fixture(scope="session")
 def model_dir(tmp_path_factory) -> Path:
     workdir = tmp_path_factory.mktemp("model")
-    data_path = workdir / "history.csv"
-    simulate(days=20, n_stations=3, seed=0).to_csv(data_path, index=False)
+    gold_db_path = workdir / "gold.duckdb"
+    data = simulate(days=20, n_stations=3, seed=0)
+    with duckdb.connect(str(gold_db_path)) as connection:
+        connection.register("observations", data)
+        connection.execute("create schema main_gold")
+        connection.execute("create table main_gold.velov_gold as select * from observations")
     out = workdir / "models"
-    train(data_path, out, version="0.0.0-test", test_days=3)
+    train(
+        gold_db_path,
+        out,
+        version="0.0.0-test",
+        test_days=3,
+        gold_table="main_gold.velov_gold",
+    )
     return out
 
 

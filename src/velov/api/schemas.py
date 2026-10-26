@@ -23,17 +23,18 @@ class PredictionRequest(BaseModel):
     TODO 4 bis [Should] : normaliser timestamp en UTC
              (indice : @field_validator("timestamp") et value.astimezone(UTC)).
     """
+
     @model_validator(mode="after")
-    def validate_bikes_capacity(self) -> "PredictionRequest":
+    def validate_bikes_capacity(self) -> PredictionRequest:
         if self.bikes_available > self.capacity:
             raise ValueError("bikes_available ne peut pas dépasser capacity")
         return self
-    
+
     @field_validator("timestamp")
     @classmethod
     def normalize_timestamp_to_utc(cls, value: AwareDatetime) -> AwareDatetime:
         return value.astimezone(UTC)
-    
+
     model_config = ConfigDict(extra="forbid")
 
     station_id: int = Field(..., description="Identifiant de la station", ge=1)
@@ -42,6 +43,7 @@ class PredictionRequest(BaseModel):
     bikes_available: int = Field(..., description="Vélos disponibles", ge=0)
     temperature: float = Field(..., description="Température en °C", ge=-30, le=50)
     is_raining: bool = Field(..., description="Indique si il pleut")
+
 
 class PredictionResponse(BaseModel):
     station_id: int
