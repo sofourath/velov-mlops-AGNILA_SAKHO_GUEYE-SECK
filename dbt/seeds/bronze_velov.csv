@@ -1,0 +1,2 @@
+station_id,timestamp,capacity,bikes_available,temperature,is_raining
+1,2026-10-06T06:00:00Z,20,12,14.5,false

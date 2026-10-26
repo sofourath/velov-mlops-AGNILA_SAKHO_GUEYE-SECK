@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: velov_observations
+    description: "Couche silver typée et dédupliquée par station et timestamp."
+    columns:
+      - name: station_id
+        data_tests:
+          - not_null
+      - name: timestamp
+        data_tests:
+          - not_null
+      - name: capacity
+        data_tests:
+          - not_null
+      - name: bikes_available
+        data_tests:
+          - not_null

@@ -1,0 +1,6 @@
+velov:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: dbt/target/velov.duckdb

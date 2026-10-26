@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: velov_api_contract
+    description: "Observations conformes au contrat d'entrée de POST /v1/predict."
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: station_id
+        data_type: integer
+        description: "Identifiant positif de la station."
+        data_tests:
+          - not_null
+      - name: timestamp
+        data_type: timestamptz
+        description: "Instant UTC de l'observation."
+        data_tests:
+          - not_null
+      - name: capacity
+        data_type: integer
+        description: "Capacité de la station, entre 1 et 100."
+        data_tests:
+          - not_null
+      - name: bikes_available
+        data_type: integer
+        description: "Nombre de vélos disponibles."
+        data_tests:
+          - not_null
+      - name: temperature
+        data_type: double
+        description: "Température en degrés Celsius."
+        data_tests:
+          - not_null
+      - name: is_raining
+        data_type: boolean
+        description: "Indique si la station est sous la pluie."
+        data_tests:
+          - not_null
+    data_tests:
+      - unique:
+          column_name: "concat(cast(station_id as varchar), '|', cast(timestamp as varchar))"

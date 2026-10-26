@@ -31,6 +31,9 @@ pip install -e .                     # rend le package velov importable
 
 python -m velov.data                 # génère data/velov_history.csv (simulateur, seed fixe)
 python -m velov.data --bronze-out data/bronze.csv  # ingestion bronze rejouable, sans doublons
+dbt seed --project-dir . --profiles-dir .                  # charge la bronze dans DuckDB
+dbt run --project-dir . --profiles-dir .                   # construit silver puis gold
+dbt test --project-dir . --profiles-dir .                  # vérifie le contrat et les clés
 python -m velov.train                # entraîne et écrit models/model.joblib + models/metadata.json
 python -m velov.train --mlflow       # idem + journalisation MLflow (puis : mlflow ui)
 pytest                               # tests
@@ -68,6 +71,19 @@ tests/             pytest (features, API)
 docs/              templates : model card, runbook, ADR
 exercices/         démo pickle (S1)
 ```
+
+### Modèles dbt
+
+Le projet dbt utilise DuckDB pour rester exécutable localement :
+
+- `silver.velov_observations` caste les types et déduplique la bronze par
+  `(station_id, timestamp)`.
+- `gold.velov_api_contract` expose exactement les six champs du contrat
+  `PredictionRequest`. Son contrat dbt est `enforced: true` : une modification
+  de schéma échoue pendant `dbt run`.
+
+Le profil local est défini dans [profiles.yml](profiles.yml) et la base générée
+dans `dbt/target/` n'est pas versionnée.
 
 ## Usage de l'IA générative
 
