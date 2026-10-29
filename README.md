@@ -142,3 +142,33 @@ nettoyées. Le modèle gold applique le contrat défini par les six colonnes de 
 dans `src/velov/data.py`. Par défaut, dbt utilise une base DuckDB locale sous `dbt/target/`.
 Pour utiliser un autre fichier bronze, passez `--vars '{"velov_bronze_csv": "chemin/vers/bronze.csv"}'`
 à la commande `dbt build`.
+
+### Runs MLflow tracés
+
+Pour créer un run traçable avec le modèle entraîné :
+
+```powershell
+python -m velov.train --mlflow
+```
+
+Chaque run enregistre dans l'expérience `velov-availability` :
+
+- les paramètres du run : version, seed, fenêtre de test et table gold ;
+- les métriques de test : `mae_model` et `mae_baseline_persistence` ;
+- le tag `git_commit` correspondant au code exécuté ;
+- le tag `data_sha256` correspondant à l'empreinte de la base DuckDB gold ;
+- le modèle sklearn sérialisé et sa signature d'entrée/sortie.
+
+Avec MLflow en local, consultez les runs avec :
+
+```powershell
+mlflow ui
+```
+
+Avec la stack Docker MLflow, ouvrez `http://127.0.0.1:5000` après :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml up -d --build
+$env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+python -m velov.train --mlflow
+```
