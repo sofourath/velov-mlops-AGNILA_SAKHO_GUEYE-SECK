@@ -16,6 +16,8 @@ import argparse
 import hashlib
 import json
 import platform
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -51,6 +53,20 @@ def sha256_of(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def git_commit() -> str:
+    """Retourne le commit qui a produit l'artefact d'entraînement."""
+    git = shutil.which("git")
+    if git is None:
+        raise FileNotFoundError("git introuvable dans le PATH")
+    result = subprocess.run(  # noqa: S603 - executable is resolved from the trusted PATH
+        [git, "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def build_pipeline(seed: int = 42) -> Pipeline:
@@ -142,6 +158,7 @@ def train(
     metadata = {
         "model_name": "velov-availability",
         "model_version": version,
+        "git_commit": git_commit(),
         "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "task": "Prédire le nombre de vélos disponibles à H+1 par station",
         "input_columns": RAW_COLUMNS,
@@ -153,6 +170,11 @@ def train(
             "test_days": test_days,
             "n_train": int(len(train_df)),
             "n_test": int(len(test_df)),
+        },
+        "parameters": {
+            "seed": seed,
+            "test_days": test_days,
+            "gold_table": gold_table,
         },
         "artifact": {"file": MODEL_FILENAME, "sha256": sha256_of(model_path)},
         "data_sha256": sha256_of(gold_db_path),
@@ -185,16 +207,30 @@ def log_to_mlflow(metadata: dict, out_dir: Path) -> None:
             }
         )
     )[FEATURES]
+    signature_sample = sample.copy()
+    signature_sample[NUMERIC_FEATURES] = signature_sample[NUMERIC_FEATURES].astype("float64")
 
     mlflow.set_experiment("velov-availability")
     with mlflow.start_run(run_name=f"v{metadata['model_version']}"):
-        mlflow.log_params({"model": "HistGradientBoostingRegressor", "test_days": metadata["metrics"]["test_days"]})
-        mlflow.log_metrics({k: v for k, v in metadata["metrics"].items() if k.startswith("mae")})
+        mlflow.log_params(
+            {
+                "model": "HistGradientBoostingRegressor",
+                "model_version": metadata["model_version"],
+                **metadata["parameters"],
+            }
+        )
+        mlflow.log_metrics({key: value for key, value in metadata["metrics"].items() if key.startswith("mae")})
+        mlflow.set_tags(
+            {
+                "git_commit": metadata["git_commit"],
+                "data_sha256": metadata["data_sha256"],
+            }
+        )
         mlflow.sklearn.log_model(
             pipeline,
             name="model",
-            signature=infer_signature(sample, pipeline.predict(sample)),
-            input_example=sample,
+            signature=infer_signature(signature_sample, pipeline.predict(signature_sample)),
+            input_example=signature_sample,
             # Depuis MLflow 3.x, sklearn est sérialisé par défaut en skops (format sûr,
             # sans exécution de code arbitraire), plus en pickle. skops refuse les types
             # qu'il ne connaît pas : on déclare explicitement ceux qu'on a vérifiés.
