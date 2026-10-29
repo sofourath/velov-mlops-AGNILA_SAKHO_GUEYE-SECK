@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 
 from prefect import flow, task
 
@@ -9,7 +11,7 @@ from prefect import flow, task
 def ingest_bronze() -> None:
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "velov.data",
             "--days",
@@ -27,9 +29,12 @@ def ingest_bronze() -> None:
 
 @task
 def run_dbt_build() -> None:
-    subprocess.run(
+    dbt = shutil.which("dbt")
+    if dbt is None:
+        raise FileNotFoundError("dbt introuvable dans le PATH")
+    subprocess.run(  # noqa: S603 - executable is resolved from the trusted PATH  # noqa: S603 - executable is resolved from the trusted PATH
         [
-            "dbt",
+            dbt,
             "build",
             "--project-dir",
             "dbt",

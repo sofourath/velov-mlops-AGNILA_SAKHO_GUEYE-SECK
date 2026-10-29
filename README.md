@@ -40,6 +40,53 @@ pytest                               # tests
 uvicorn velov.api.main:app --reload  # API sur http://127.0.0.1:8000/docs (--reload : en dev uniquement)
 ```
 
+### Tester Docker Compose
+
+Prérequis : Docker Desktop démarré et `POSTGRES_PASSWORD` défini dans `.env`.
+La stack applicative démarre l'API sur `8000` et PostgreSQL sur le réseau interne :
+
+```powershell
+docker compose up -d --build
+docker compose ps
+curl.exe http://127.0.0.1:8000/health
+curl.exe http://127.0.0.1:8000/ready
+```
+
+Le résultat attendu est `{"status":"ok"}` pour `/health` et un statut HTTP
+`200` avec `model_version` pour `/ready`. Les logs se consultent avec :
+
+```powershell
+docker compose logs -f api
+```
+
+Pour tester aussi MLflow, lancer les deux fichiers Compose ensemble :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml up -d --build
+docker compose -f compose.yaml -f compose.mlflow.yaml ps
+curl.exe http://127.0.0.1:5000/version
+```
+
+L'interface MLflow est alors disponible sur
+`http://127.0.0.1:5000`. Pour suivre les logs :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml logs -f mlflow
+```
+
+Arrêter les services sans supprimer les données :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml down
+```
+
+Pour repartir de zéro, y compris les bases PostgreSQL et les artefacts MLflow,
+utiliser `down -v` :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml down -v
+```
+
 Exemple d'appel :
 
 ```bash
