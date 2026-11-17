@@ -63,10 +63,7 @@ def _build_input_example(model: object, metadata: dict) -> pd.DataFrame:
         feature_names = metadata.get("features", [])
 
     if not feature_names:
-        raise ValueError(
-            "Impossible de déterminer les colonnes d'entrée du modèle "
-            "pour créer la signature MLflow."
-        )
+        raise ValueError("Impossible de déterminer les colonnes d'entrée du modèle pour créer la signature MLflow.")
 
     row: dict[str, object] = {}
 
@@ -131,10 +128,7 @@ def log_to_mlflow(metadata: dict, model_dir: Path) -> str:
         data = metadata.get("data", {})
 
         fingerprint = (
-            data.get("sha256")
-            or data.get("fingerprint")
-            or metadata.get("data_sha256")
-            or artifact.get("data_sha256")
+            data.get("sha256") or data.get("fingerprint") or metadata.get("data_sha256") or artifact.get("data_sha256")
         )
 
         data_start = data.get("start") or metadata.get("data_start")
@@ -191,31 +185,66 @@ def register_model(
 
 
 def evaluate_promotion(
-    model_metrics: dict[str, float],
+    challenger_metrics: dict[str, float],
+    champion_metrics: dict[str, float] | None = None,
     *,
-    require_peak_hours: bool = False,
+    same_window: bool = True,
+    min_gain: float = 0.02,
 ) -> tuple[bool, str]:
-    """Trois conditions de promotion: métriques, MAE meilleure que la baseline et contrôle d'heures de pointe."""
-    if "mae_model" not in model_metrics:
-        return False, "missing mae_model"
+    """Applique les trois conditions de promotion du TP4."""
 
-    if "mae_baseline_persistence" not in model_metrics:
-        return False, "missing mae_baseline_persistence"
+    # Condition 1 : challenger et champion doivent être évalués
+    # sur la même fenêtre.
+    if not same_window:
+        return False, "different_evaluation_window"
 
-    if float(model_metrics["mae_model"]) >= float(model_metrics["mae_baseline_persistence"]):
+    # Vérification des métriques nécessaires.
+    if "mae_model" not in challenger_metrics:
+        return False, "missing_mae_model"
+
+    if "mae_baseline_persistence" not in challenger_metrics:
+        return False, "missing_mae_baseline_persistence"
+
+    challenger_mae = float(challenger_metrics["mae_model"])
+    baseline_mae = float(challenger_metrics["mae_baseline_persistence"])
+
+    # Condition 2 : le challenger doit battre la persistance.
+    if challenger_mae >= baseline_mae:
         return False, "model_not_better_than_baseline"
 
-    if require_peak_hours and "mae_model_peak_hours" in model_metrics:
-        peak_hours_mae = float(model_metrics["mae_model_peak_hours"])
-        if peak_hours_mae > float(model_metrics["mae_model"]) * 1.5:
-            return False, "peak_hour_mae_too_high"
+    # S'il n'existe pas encore de champion, le challenger
+    # devient le premier champion.
+    if champion_metrics is None:
+        return True, "first_champion"
+
+    if "mae_model" not in champion_metrics:
+        return False, "missing_champion_mae_model"
+
+    champion_mae = float(champion_metrics["mae_model"])
+
+    # Condition 3 : battre le champion d'au moins 2 %.
+    target = champion_mae * (1 - min_gain)
+
+    if challenger_mae > target:
+        return False, "gain_too_small"
 
     return True, "eligible"
 
 
-def should_promote(model_metrics: dict[str, float], *, require_peak_hours: bool = False) -> bool:
-    """Vrai si le challenger respecte les 3 conditions de promotion."""
-    return evaluate_promotion(model_metrics, require_peak_hours=require_peak_hours)[0]
+def should_promote(
+    challenger_metrics: dict[str, float],
+    champion_metrics: dict[str, float] | None = None,
+    *,
+    same_window: bool = True,
+    min_gain: float = 0.02,
+) -> bool:
+    """Vrai si le challenger respecte la règle de promotion."""
+    return evaluate_promotion(
+        challenger_metrics,
+        champion_metrics,
+        same_window=same_window,
+        min_gain=min_gain,
+    )[0]
 
 
 def promote_model(
@@ -223,21 +252,73 @@ def promote_model(
     *,
     challenger_alias: str = "challenger",
     champion_alias: str = "champion",
+    previous_champion_alias: str = "previous-champion",
+    min_gain: float = 0.02,
 ) -> str | None:
-    """Promet le challenger vers le champion si la règle de promotion est respectée."""
+    """Promeut le challenger s'il respecte les trois conditions."""
+
     client = MlflowClient()
 
     try:
-        challenger = client.get_model_version_by_alias(model_name, challenger_alias)
+        challenger = client.get_model_version_by_alias(
+            model_name,
+            challenger_alias,
+        )
     except Exception:
         return None
 
-    run = client.get_run(challenger.run_id)
-    metrics = dict(run.data.metrics)
-    eligible, _ = evaluate_promotion(metrics)
+    challenger_run = client.get_run(challenger.run_id)
+    challenger_metrics = dict(challenger_run.data.metrics)
+    challenger_tags = dict(challenger_run.data.tags)
+
+    try:
+        champion = client.get_model_version_by_alias(
+            model_name,
+            champion_alias,
+        )
+
+        champion_run = client.get_run(champion.run_id)
+        champion_metrics = dict(champion_run.data.metrics)
+        champion_tags = dict(champion_run.data.tags)
+
+        same_window = challenger_tags.get("data_start") == champion_tags.get("data_start") and challenger_tags.get(
+            "data_end"
+        ) == champion_tags.get("data_end")
+
+    except Exception:
+        champion = None
+        champion_metrics = None
+        same_window = True
+
+    eligible, reason = evaluate_promotion(
+        challenger_metrics,
+        champion_metrics,
+        same_window=same_window,
+        min_gain=min_gain,
+    )
 
     if not eligible:
         return None
 
-    client.set_registered_model_alias(model_name, champion_alias, challenger.version)
+    # Conserver l'ancien champion pour permettre le rollback.
+    if champion is not None:
+        client.set_registered_model_alias(
+            model_name,
+            previous_champion_alias,
+            champion.version,
+        )
+
+    client.set_registered_model_alias(
+        model_name,
+        champion_alias,
+        challenger.version,
+    )
+
+    client.set_model_version_tag(
+        model_name,
+        challenger.version,
+        "promotion",
+        reason,
+    )
+
     return challenger.version
