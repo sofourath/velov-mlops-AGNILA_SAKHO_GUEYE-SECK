@@ -70,3 +70,14 @@ jobs:
         uses: gitleaks/gitleaks-action@1938557f6a58837331b99822ab17b8e536e7bef9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Build API image
+        run: docker build --tag velov-api:${{ github.sha }} .

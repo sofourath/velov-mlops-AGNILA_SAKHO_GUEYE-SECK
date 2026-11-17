@@ -159,6 +159,7 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--stations", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--start", default="2026-06-01", help="Date locale de début au format YYYY-MM-DD")
     parser.add_argument("--out", type=Path, default=Path("data/velov_history.csv"))
     parser.add_argument(
         "--bronze-out",
@@ -167,7 +168,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    df = simulate(days=args.days, n_stations=args.stations, seed=args.seed)
+    df = simulate(days=args.days, n_stations=args.stations, start=args.start, seed=args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.out, index=False)
     if args.bronze_out:

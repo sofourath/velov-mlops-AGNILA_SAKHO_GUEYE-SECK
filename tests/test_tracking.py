@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+from velov import tracking
 from velov.tracking import evaluate_promotion, should_promote
 
 
@@ -84,3 +87,74 @@ def test_should_promote_returns_boolean() -> None:
     )
 
     assert result is True
+
+
+def test_promote_model_updates_aliases_and_keeps_previous_champion(monkeypatch) -> None:
+    evaluation_window = {"data_start": "2026-10-01T00:00:00+00:00", "data_end": "2026-10-14T23:00:00+00:00"}
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.alias_updates = []
+            self.version_tags = []
+
+        def get_model_version_by_alias(self, model_name: str, alias: str):
+            versions = {
+                "challenger": SimpleNamespace(run_id="new-run", version="2"),
+                "champion": SimpleNamespace(run_id="old-run", version="1"),
+            }
+            return versions[alias]
+
+        def get_run(self, run_id: str):
+            if run_id == "new-run":
+                data = SimpleNamespace(
+                    metrics={"mae_model": 1.8, "mae_baseline_persistence": 2.9},
+                    tags=evaluation_window,
+                )
+            else:
+                data = SimpleNamespace(metrics={"mae_model": 2.0}, tags=evaluation_window)
+            return SimpleNamespace(data=data)
+
+        def set_registered_model_alias(self, model_name: str, alias: str, version: str) -> None:
+            self.alias_updates.append((alias, version))
+
+        def set_model_version_tag(self, model_name: str, version: str, key: str, value: str) -> None:
+            self.version_tags.append((version, key, value))
+
+    client = FakeClient()
+    monkeypatch.setattr(tracking, "MlflowClient", lambda: client)
+
+    assert tracking.promote_model() == "2"
+    assert client.alias_updates == [("previous-champion", "1"), ("champion", "2")]
+    assert client.version_tags == [("2", "promotion", "eligible")]
+
+
+def test_promote_model_rejects_missing_evaluation_window(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.alias_updates = []
+
+        def get_model_version_by_alias(self, model_name: str, alias: str):
+            versions = {
+                "challenger": SimpleNamespace(run_id="new-run", version="2"),
+                "champion": SimpleNamespace(run_id="old-run", version="1"),
+            }
+            return versions[alias]
+
+        def get_run(self, run_id: str):
+            if run_id == "new-run":
+                data = SimpleNamespace(
+                    metrics={"mae_model": 1.8, "mae_baseline_persistence": 2.9},
+                    tags={"data_start": "2026-10-01", "data_end": "2026-10-14"},
+                )
+            else:
+                data = SimpleNamespace(metrics={"mae_model": 2.0}, tags={})
+            return SimpleNamespace(data=data)
+
+        def set_registered_model_alias(self, model_name: str, alias: str, version: str) -> None:
+            self.alias_updates.append((alias, version))
+
+    client = FakeClient()
+    monkeypatch.setattr(tracking, "MlflowClient", lambda: client)
+
+    assert tracking.promote_model() is None
+    assert client.alias_updates == []

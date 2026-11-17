@@ -172,3 +172,26 @@ docker compose -f compose.yaml -f compose.mlflow.yaml up -d --build
 $env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 python -m velov.train --mlflow
 ```
+
+### Déployer le champion et réentraîner
+
+L'API sert le bundle présent dans `models/`. Pour livrer l'alias `champion` enregistré dans
+MLflow sur la VM, puis vérifier sa version :
+
+```bash
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+python -m velov.deploy --alias champion --model-dir models
+docker compose up -d --force-recreate api
+curl --fail http://127.0.0.1:8000/ready
+```
+
+Le flow Prefect produit un challenger chaque lundi à 03:00 (UTC), sans promotion automatique.
+Il faut installer `requirements-dev.txt`, démarrer le serveur Prefect et le processus de service
+du flow sur la VM. Définir `MLFLOW_TRACKING_URI` dans l'environnement du service Prefect afin
+que runs, modèles et alias soient conservés dans le registre MLflow. Détails et procédure de
+rollback : [docs/runbook.md](docs/runbook.md).
+
+La CI construit l'image API, mais ne la pousse pas vers un registre. La protection de `main`
+se configure dans GitHub Settings → Branches : exiger une pull request et les checks `lint`,
+`tests`, `gitleaks` et `image` avant fusion. Cette règle est un réglage GitHub, pas un fichier
+du dépôt.

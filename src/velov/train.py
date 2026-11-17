@@ -176,6 +176,8 @@ def train(
             "test_days": test_days,
             "gold_table": gold_table,
         },
+        "data_start": pd.Timestamp(test_df["timestamp"].min()).isoformat(),
+        "data_end": pd.Timestamp(test_df["timestamp"].max()).isoformat(),
         "artifact": {"file": MODEL_FILENAME, "sha256": sha256_of(model_path)},
         "data_sha256": sha256_of(gold_db_path),
         "runtime": {

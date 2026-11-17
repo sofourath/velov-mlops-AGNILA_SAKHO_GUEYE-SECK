@@ -9,6 +9,9 @@ services:
       DATABASE_URL: >-
         postgresql+psycopg://velov:${POSTGRES_PASSWORD:?}@db:5432/velov
 
+    volumes:
+      - ./models:/app/models:ro
+
     depends_on:
       db:
         condition: service_healthy
