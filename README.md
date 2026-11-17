@@ -40,6 +40,53 @@ pytest                               # tests
 uvicorn velov.api.main:app --reload  # API sur http://127.0.0.1:8000/docs (--reload : en dev uniquement)
 ```
 
+### Tester Docker Compose
+
+Prérequis : Docker Desktop démarré et `POSTGRES_PASSWORD` défini dans `.env`.
+La stack applicative démarre l'API sur `8000` et PostgreSQL sur le réseau interne :
+
+```powershell
+docker compose up -d --build
+docker compose ps
+curl.exe http://127.0.0.1:8000/health
+curl.exe http://127.0.0.1:8000/ready
+```
+
+Le résultat attendu est `{"status":"ok"}` pour `/health` et un statut HTTP
+`200` avec `model_version` pour `/ready`. Les logs se consultent avec :
+
+```powershell
+docker compose logs -f api
+```
+
+Pour tester aussi MLflow, lancer les deux fichiers Compose ensemble :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml up -d --build
+docker compose -f compose.yaml -f compose.mlflow.yaml ps
+curl.exe http://127.0.0.1:5000/version
+```
+
+L'interface MLflow est alors disponible sur
+`http://127.0.0.1:5000`. Pour suivre les logs :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml logs -f mlflow
+```
+
+Arrêter les services sans supprimer les données :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml down
+```
+
+Pour repartir de zéro, y compris les bases PostgreSQL et les artefacts MLflow,
+utiliser `down -v` :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml down -v
+```
+
 Exemple d'appel :
 
 ```bash
@@ -95,3 +142,33 @@ nettoyées. Le modèle gold applique le contrat défini par les six colonnes de 
 dans `src/velov/data.py`. Par défaut, dbt utilise une base DuckDB locale sous `dbt/target/`.
 Pour utiliser un autre fichier bronze, passez `--vars '{"velov_bronze_csv": "chemin/vers/bronze.csv"}'`
 à la commande `dbt build`.
+
+### Runs MLflow tracés
+
+Pour créer un run traçable avec le modèle entraîné :
+
+```powershell
+python -m velov.train --mlflow
+```
+
+Chaque run enregistre dans l'expérience `velov-availability` :
+
+- les paramètres du run : version, seed, fenêtre de test et table gold ;
+- les métriques de test : `mae_model` et `mae_baseline_persistence` ;
+- le tag `git_commit` correspondant au code exécuté ;
+- le tag `data_sha256` correspondant à l'empreinte de la base DuckDB gold ;
+- le modèle sklearn sérialisé et sa signature d'entrée/sortie.
+
+Avec MLflow en local, consultez les runs avec :
+
+```powershell
+mlflow ui
+```
+
+Avec la stack Docker MLflow, ouvrez `http://127.0.0.1:5000` après :
+
+```powershell
+docker compose -f compose.yaml -f compose.mlflow.yaml up -d --build
+$env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+python -m velov.train --mlflow
+```
