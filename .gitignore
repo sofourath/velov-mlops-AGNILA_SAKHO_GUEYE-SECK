@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 /dbt/target/
 /dbt/dbt_packages/
+/dbt/logs/
 
 # Données et artefacts : jamais dans git (régénérables, volumineux, parfois sensibles)
 data/*

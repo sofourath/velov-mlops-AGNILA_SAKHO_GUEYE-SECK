@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,6 +10,7 @@ import mlflow
 import mlflow.sklearn
 import pandas as pd
 from mlflow import MlflowClient
+from mlflow.exceptions import MlflowException
 from mlflow.models import infer_signature
 
 MODEL_FILENAME = "model.joblib"
@@ -104,13 +106,15 @@ def log_to_mlflow(metadata: dict, model_dir: Path) -> str:
 
     model = joblib.load(model_path)
 
-    params = metadata.get("params", {})
+    params = metadata.get("params", metadata.get("parameters", {}))
     metrics = metadata.get("metrics", {})
 
     mlflow.set_experiment(EXPERIMENT_NAME)
 
     with mlflow.start_run(run_name=f"v{metadata.get('model_version', 'unknown')}") as run:
-        for name in ("seed", "learning_rate", "max_iter", "test_days"):
+        if metadata.get("model_version") is not None:
+            mlflow.log_param("model_version", metadata["model_version"])
+        for name in ("seed", "learning_rate", "max_iter", "test_days", "gold_table"):
             if name in params:
                 mlflow.log_param(name, params[name])
 
@@ -260,12 +264,11 @@ def promote_model(
     client = MlflowClient()
 
     try:
-        challenger = client.get_model_version_by_alias(
-            model_name,
-            challenger_alias,
-        )
-    except Exception:
-        return None
+        challenger = client.get_model_version_by_alias(model_name, challenger_alias)
+    except MlflowException as exc:
+        if exc.error_code == "RESOURCE_DOES_NOT_EXIST":
+            return None
+        raise
 
     challenger_run = client.get_run(challenger.run_id)
     challenger_metrics = dict(challenger_run.data.metrics)
@@ -281,11 +284,22 @@ def promote_model(
         champion_metrics = dict(champion_run.data.metrics)
         champion_tags = dict(champion_run.data.tags)
 
-        same_window = challenger_tags.get("data_start") == champion_tags.get("data_start") and challenger_tags.get(
-            "data_end"
-        ) == champion_tags.get("data_end")
+        challenger_start = challenger_tags.get("data_start")
+        challenger_end = challenger_tags.get("data_end")
+        champion_start = champion_tags.get("data_start")
+        champion_end = champion_tags.get("data_end")
+        same_window = bool(
+            challenger_start
+            and challenger_end
+            and champion_start
+            and champion_end
+            and challenger_start == champion_start
+            and challenger_end == champion_end
+        )
 
-    except Exception:
+    except MlflowException as exc:
+        if exc.error_code != "RESOURCE_DOES_NOT_EXIST":
+            raise
         champion = None
         champion_metrics = None
         same_window = True
@@ -322,3 +336,20 @@ def promote_model(
     )
 
     return challenger.version
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Opérations de registre MLflow pour le modèle Vélo'v.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("promote", help="Promouvoir l'alias challenger si les règles sont satisfaites.")
+    args = parser.parse_args()
+
+    if args.command == "promote":
+        version = promote_model()
+        if version is None:
+            raise SystemExit("Promotion refusée : challenger absent ou critères non satisfaits.")
+        print(f"Version {version} promue comme champion.")
+
+
+if __name__ == "__main__":
+    main()

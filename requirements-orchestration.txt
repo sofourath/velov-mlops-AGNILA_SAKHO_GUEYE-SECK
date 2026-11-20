@@ -1,0 +1,2 @@
+# Dépendances facultatives des flows Prefect (à installer sur le serveur d'orchestration).
+prefect==3.9.3

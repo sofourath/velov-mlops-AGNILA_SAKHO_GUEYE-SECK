@@ -27,4 +27,5 @@ def test_training_metadata_contains_traceability_fields(tmp_path):
         "test_days": 3,
         "gold_table": "main_gold.velov_gold",
     }
+    assert metadata["data_start"] < metadata["data_end"]
     assert set(metadata["metrics"]) >= {"mae_model", "mae_baseline_persistence"}
