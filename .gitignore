@@ -17,6 +17,8 @@ mlruns/
 
 # Secrets
 .env
+*.crt
+*.key
 
 *.egg-info/
 dbt/logs/
