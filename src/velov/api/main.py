@@ -31,7 +31,6 @@ from velov.api.schemas import PredictionRequest, PredictionResponse
 from velov.features import FEATURES, add_features
 from velov.train import METADATA_FILENAME, sha256_of
 
-
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("velov.api")
 
@@ -48,16 +47,12 @@ def load_model(model_dir: Path) -> tuple[object, dict]:
     if not metadata_path.exists():
         raise FileNotFoundError(f"{metadata_path} introuvable")
 
-    metadata = json.loads(
-        metadata_path.read_text(encoding="utf-8")
-    )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
     model_path = model_dir / metadata["artifact"]["file"]
 
     if sha256_of(model_path) != metadata["artifact"]["sha256"]:
-        raise RuntimeError(
-            f"Empreinte invalide pour {model_path}"
-        )
+        raise RuntimeError(f"Empreinte invalide pour {model_path}")
 
     model = joblib.load(model_path)
 
@@ -97,9 +92,7 @@ def save_prediction(
     database_url = get_psycopg_database_url()
 
     if not database_url:
-        logger.warning(
-            "DATABASE_URL absente : prédiction non enregistrée"
-        )
+        logger.warning("DATABASE_URL absente : prédiction non enregistrée")
         return
 
     try:
@@ -169,22 +162,16 @@ def save_prediction(
         )
 
     except Exception:
-        logger.exception(
-            "Impossible d'enregistrer la prédiction en base"
-        )
+        logger.exception("Impossible d'enregistrer la prédiction en base")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Exécuté au démarrage et à l'arrêt de l'application."""
-    model_dir = Path(
-        os.getenv("MODEL_DIR", "models")
-    )
+    model_dir = Path(os.getenv("MODEL_DIR", "models"))
 
     try:
-        STATE["model"], STATE["metadata"] = load_model(
-            model_dir
-        )
+        STATE["model"], STATE["metadata"] = load_model(model_dir)
 
         logger.info(
             "Modèle %s chargé",
@@ -223,10 +210,7 @@ def health() -> dict[str, str]:
 @app.get("/ready")
 def ready() -> dict[str, str]:
     """Readiness : le modèle doit être chargé."""
-    if (
-        STATE["model"] is None
-        or STATE["metadata"] is None
-    ):
+    if STATE["model"] is None or STATE["metadata"] is None:
         raise HTTPException(
             status_code=503,
             detail="Modèle non chargé",
@@ -246,26 +230,17 @@ def predict(
     request: PredictionRequest,
 ) -> PredictionResponse:
     """Calcule une prédiction à H+1 et la journalise en base."""
-    if (
-        STATE["model"] is None
-        or STATE["metadata"] is None
-    ):
+    if STATE["model"] is None or STATE["metadata"] is None:
         raise HTTPException(
             status_code=503,
             detail="Modèle non chargé",
         )
 
-    observation = pd.DataFrame(
-        [request.model_dump()]
-    )
+    observation = pd.DataFrame([request.model_dump()])
 
-    features = add_features(
-        observation
-    )[FEATURES]
+    features = add_features(observation)[FEATURES]
 
-    prediction = float(
-        STATE["model"].predict(features)[0]
-    )
+    prediction = float(STATE["model"].predict(features)[0])
 
     predicted_bikes = float(
         np.clip(
@@ -277,10 +252,7 @@ def predict(
 
     response = PredictionResponse(
         station_id=request.station_id,
-        target_timestamp=(
-            request.timestamp
-            + timedelta(hours=1)
-        ),
+        target_timestamp=(request.timestamp + timedelta(hours=1)),
         predicted_bikes=predicted_bikes,
         model_version=STATE["metadata"]["model_version"],
     )
