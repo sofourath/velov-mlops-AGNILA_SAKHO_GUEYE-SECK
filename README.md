@@ -119,6 +119,35 @@ docs/              templates : model card, runbook, ADR
 exercices/         démo pickle (S1)
 ```
 
+## Charge et optimisation (TP5)
+
+Les paliers sont mesurés depuis le poste contre l'API HTTPS de la VM :
+
+```powershell
+.\loadtest\paliers.ps1
+python .\loadtest\summary.py (Get-ChildItem .\loadtest\results\w1 -Filter w*.jsonl | ForEach-Object { $_.FullName })
+python .\scripts\bench_predict.py --n 500 --batch 1 100 1000
+```
+
+Résultat retenu pour les Must : SLO provisoire de p95 inférieur à 500 ms avec moins de 1 % d'erreurs.
+Les cinq paliers ont été testés pendant 20 secondes chacun.
+
+| Utilisateurs | Requêtes | Req/s | p50 ms | p95 ms | p99 ms | Erreurs |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 425 | 20.85 | 492.4 | 638.4 | 824.2 | 0 % |
+| 25 | 403 | 19.58 | 1286.1 | 1578.1 | 1778.6 | 0 % |
+| 50 | 390 | 18.13 | 2663.7 | 3253.9 | 4556.0 | 0 % |
+| 100 | 426 | 19.11 | 5394.7 | 5747.5 | 6148.8 | 0 % |
+| 150 | 484 | 19.35 | 7442.8 | 9068.3 | 9144.8 | 0 % |
+
+La capacité avant dépassement du SLO est donc inférieure à 10 utilisateurs. Aucun taux d'erreur n'a été
+observé, mais les latences augmentent dès le premier palier. Sur la VM, le conteneur API atteint environ
+118 % de CPU pendant le palier de 50 utilisateurs ; PostgreSQL reste autour de 1 %. Le goulet est donc
+côté calcul API/modèle, pas côté base.
+
+Le benchmark local confirme que les prédictions individuelles sont dominées par le chargement et les
+features du batch unique, tandis qu'un batch plus grand amortit le coût.
+
 ## Usage de l'IA générative
 
 Chaque activité indique son mode : **sans IA**, **IA déclarée** ou **IA imposée**.
