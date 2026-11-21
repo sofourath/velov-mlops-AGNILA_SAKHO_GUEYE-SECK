@@ -1,0 +1,7 @@
+# Export ONNX du modèle Vélo'v (S5). Outils d'export : jamais dans l'image de serving,
+# qui n'a besoin que d'onnxruntime (requirements.txt).
+# protobuf épinglé : skl2onnx 1.20 écrit des booléens dans un attribut d'entiers, refusés par protobuf 7.
+skl2onnx==1.20.0
+onnx==1.23.2
+protobuf==6.33.5
+onnxruntime==1.32.0
