@@ -28,6 +28,7 @@ import psycopg
 from fastapi import FastAPI, HTTPException
 
 from velov.api.schemas import PredictionRequest, PredictionResponse
+from velov.export_onnx import ONNX_FILENAME, OnnxPredictor
 from velov.features import FEATURES, add_features
 from velov.train import METADATA_FILENAME, sha256_of
 
@@ -41,20 +42,45 @@ STATE: dict = {
 
 
 def load_model(model_dir: Path) -> tuple[object, dict]:
-    """Charge le modèle après avoir vérifié son empreinte SHA-256."""
+    """Charge le moteur demandé après vérification de son empreinte SHA-256."""
     metadata_path = model_dir / METADATA_FILENAME
 
     if not metadata_path.exists():
         raise FileNotFoundError(f"{metadata_path} introuvable")
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    model_format = os.getenv("MODEL_FORMAT", "joblib").lower()
 
-    model_path = model_dir / metadata["artifact"]["file"]
+    if model_format == "onnx":
+        onnx_info = metadata.get("onnx")
+        if not onnx_info:
+            raise RuntimeError("Métadonnées ONNX absentes")
 
-    if sha256_of(model_path) != metadata["artifact"]["sha256"]:
-        raise RuntimeError(f"Empreinte invalide pour {model_path}")
+        onnx_path = model_dir / onnx_info.get("file", ONNX_FILENAME)
 
-    model = joblib.load(model_path)
+        if not onnx_path.exists():
+            raise FileNotFoundError(f"{onnx_path} introuvable")
+
+        if sha256_of(onnx_path) != onnx_info["sha256"]:
+            raise RuntimeError(f"Empreinte invalide pour {onnx_path}")
+
+        model = OnnxPredictor(onnx_path)
+        metadata["served_format"] = "onnx"
+
+    elif model_format == "joblib":
+        model_path = model_dir / metadata["artifact"]["file"]
+
+        if not model_path.exists():
+            raise FileNotFoundError(f"{model_path} introuvable")
+
+        if sha256_of(model_path) != metadata["artifact"]["sha256"]:
+            raise RuntimeError(f"Empreinte invalide pour {model_path}")
+
+        model = joblib.load(model_path)
+        metadata["served_format"] = "joblib"
+
+    else:
+        raise ValueError(f"MODEL_FORMAT={model_format!r} invalide : utiliser 'joblib' ou 'onnx'")
 
     return model, metadata
 
@@ -219,6 +245,21 @@ def ready() -> dict[str, str]:
     return {
         "status": "ready",
         "model_version": STATE["metadata"]["model_version"],
+    }
+
+
+@app.get("/v1/model")
+def model_info() -> dict[str, str]:
+    """Retourne les informations sur le modèle actuellement servi."""
+    if STATE["model"] is None or STATE["metadata"] is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Modèle non chargé",
+        )
+
+    return {
+        "model_version": STATE["metadata"]["model_version"],
+        "served_format": STATE["metadata"].get("served_format", "joblib"),
     }
 
 

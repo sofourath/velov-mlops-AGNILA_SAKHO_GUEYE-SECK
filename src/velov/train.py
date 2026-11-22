@@ -101,6 +101,11 @@ def load_gold_table(database_path: Path, table_name: str = DEFAULT_GOLD_TABLE) -
     if not database_path.exists():
         raise FileNotFoundError(f"{database_path} introuvable : exécuter `dbt seed` puis `dbt run` depuis la racine")
 
+    if database_path.suffix.lower() == ".csv":
+        frame = pd.read_csv(database_path)
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+        return frame
+
     import duckdb
 
     with duckdb.connect(str(database_path), read_only=True) as connection:
