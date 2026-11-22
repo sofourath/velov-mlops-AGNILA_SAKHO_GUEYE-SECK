@@ -8,6 +8,8 @@ Le script tourne sans erreur et affiche « SLO respecté ». À vous de dire pou
     locust -f exercices/s5_audit/locustfile_ia.py --headless -u 100 -r 100 -t 20s
 """
 
+from datetime import UTC, datetime
+
 from locust import HttpUser, constant, events, task
 
 PAYLOAD = {
@@ -24,22 +26,28 @@ class ApiUser(HttpUser):
     host = "http://localhost:8000"
     wait_time = constant(0)
 
-    @task
+    @task(9)
     def predict(self):
-        with self.client.post("/v1/predict", json=PAYLOAD, catch_response=True) as response:
-            # Évite que des erreurs ponctuelles faussent les statistiques
-            response.success()
+        payload = PAYLOAD.copy()
+        payload["timestamp"] = datetime.now(UTC).isoformat()
 
-    @task
+        self.client.post("/v1/predict", json=payload)
+
+    @task(1)
     def health(self):
         self.client.get("/health")
 
-
 @events.test_stop.add_listener
 def check_slo(environment, **kwargs):
-    avg = environment.stats.total.avg_response_time
-    print(f"Temps de réponse moyen : {avg:.1f} ms")
-    if avg < 200:
+    stats = environment.stats.entries[("/v1/predict", "POST")]
+    p95 = stats.get_response_time_percentile(0.95)
+
+    error_rate = stats.num_failures / stats.num_requests if stats.num_requests else 0
+
+    print(f"p95 /v1/predict : {p95:.1f} ms")
+    print(f"Taux d'erreur : {error_rate * 100:.2f} %")
+
+    if p95 <= 200 and error_rate < 0.01:
         print("SLO respecté : l'API tient la charge")
     else:
         print("SLO non respecté")
