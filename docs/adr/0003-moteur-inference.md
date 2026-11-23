@@ -2,29 +2,36 @@
 
 - Statut : accepté
 - Date : 2026-11-16
-- Auteurs : équipe pédagogique (exemple d'ADR rempli, EX-17)
+- Auteurs : équipe projet Vélo'v — TP5 — SAKHO_AGNILA_GUEYE-SECK
 
 ## Contexte
-Le test de charge de S5 montre que l'API tient le SLO (p95 sous 200 ms) jusqu'à environ 41 req/s sur
-un cœur. La décomposition d'une prédiction (`scripts/bench_predict.py`) place le temps dans
-`model.predict` (4,3 ms) et dans la construction du DataFrame et des features (3,4 ms). Le coût de
-`model.predict` vient du pipeline scikit-learn (vérifications, ColumnTransformer, conversions),
-conçu pour des lots : 4,3 ms pour 1 ligne, 5,0 ms pour 100.
+Les tests de charge réalisés en local montrent que, dans le protocole retenu, aucun des paliers testés à partir de 10 utilisateurs ne respecte le SLO de p95 inférieur ou égal à 200 ms.
+
+La décomposition d'une prédiction avec `scripts/bench_predict.py` montre que, avec le moteur joblib, les étapes dominantes sont `model.predict` avec un p50 de 11,547 ms et `DataFrame + add_features` avec un p50 de 8,076 ms.
+
+L'objectif est donc de réduire le coût de l'inférence du modèle sans dégrader significativement ses prédictions.
 
 ## Options envisagées
 | Option | Avantages | Inconvénients |
 |---|---|---|
-| A. Rester sur scikit-learn (joblib) | Rien à changer, une seule pile | Le plafond reste à environ 41 req/s par cœur |
-| B. Exporter en ONNX, servir avec ONNX Runtime | Même modèle, prédiction 6 à 7 fois plus rapide dans l'API | Une étape d'export à vérifier ; outils d'export aux versions fragiles |
+| A. Rester sur scikit-learn (joblib) | Rien à changer, une seule pile | Latence d'inférence plus élevée sur les mesures locales |
+| B. Exporter en ONNX, servir avec ONNX Runtime | Même modèle, artefact plus compact et `model.predict` environ 3,8 fois plus rapide en p50 sur une ligne | Une étape d'export et de vérification supplémentaire ; dépendances et versions à maîtriser |
 | C. Plus de workers uvicorn | Aucune conversion | Ne change pas le coût par requête ; demande autant de cœurs |
 
-## Triplet mesuré (machine de préparation, API sur 1 cœur, Locust sur un autre)
-| | joblib | ONNX | Comment |
-|---|---|---|---|
-| Écart de prédiction | référence | 2,2 × 10⁻⁵ vélo au maximum | 43 200 lignes de l'historique simulé |
-| Taille | 720 ko | 443 ko | fichiers du paquet |
-| `model.predict`, 1 ligne (p50) | 4,3 ms | 0,65 ms | `bench_predict.py --n 300` |
-| Capacité sous le SLO | environ 41 req/s | environ 80 req/s | paliers de 30 s, 50 à 150 usagers |
+## Triplet mesuré
+
+Mesures locales sur la même machine, avec `scripts/bench_predict.py`, 500 mesures après 50 itérations d'échauffement.
+
+| Mesure | joblib | ONNX | Commentaire |
+|---|---:|---:|---|
+| Écart maximal de prédiction | référence | 2,20 × 10⁻⁵ vélo | vérifié sur 43 200 lignes de l'historique simulé |
+| Taille de l'artefact | 720 ko | 443 ko | ONNX est plus compact |
+| `model.predict` p50, 1 ligne | 11,547 ms | 3,050 ms | ONNX ≈ 3,8× plus rapide |
+| `model.predict` p95, 1 ligne | 16,327 ms | 5,851 ms | amélioration nette de la latence |
+| Lot 100, temps par ligne | 0,1114 ms | 0,0391 ms | ONNX plus rapide |
+| Lot 1000, temps par ligne | 0,0110 ms | 0,0116 ms | performances quasiment équivalentes |
+
+La capacité sous le SLO n'a pas encore été remesurée avec ONNX avec les mêmes paliers Locust ; aucune valeur de capacité ONNX n'est donc revendiquée ici.
 
 ## Décision
 Option B, avec `MODEL_FORMAT=onnx`. `velov.export_onnx` refuse l'export si une prédiction s'écarte de
@@ -32,10 +39,9 @@ plus de 0,001 vélo, sur toutes les lignes du jeu de données, et inscrit l'empr
 dans `metadata.json` : l'API ne le charge qu'après vérification, comme le joblib.
 
 ## Conséquences
-- La vérification se fait à chaque export, pas une fois pour toutes. Sur un modèle entraîné sur
-  30 jours, le même export donne un écart de 0,98 vélo sur 28 lignes : des températures tombent à
-  moins de 10⁻⁶ d'un seuil, et en float32 l'arbre part de l'autre côté.
-- Le gain est borné par le reste du chemin (loi d'Amdahl) : `add_features` (3,4 ms) devient l'étape
-  la plus lente. C'est la prochaine optimisation, avec un test d'égalité contre la version pandas.
-- protobuf est épinglé (6.33.5) dans `requirements-optim.txt` ; `tests/test_onnx.py` rejoue l'export en CI.
-- Chiffres à remesurer sur la VM : ce sont ceux de la machine de préparation, avec des paliers courts.
+
+- L'export ONNX est vérifié avant utilisation : l'écart maximal mesuré sur les 43 200 lignes de l'historique simulé est de 2,20 × 10⁻⁵ vélo, très inférieur au seuil de refus fixé à 0,001 vélo.
+- Avec ONNX, `model.predict` n'est plus l'étape dominante : son p50 passe de 11,547 ms à 3,050 ms, tandis que `DataFrame + add_features` mesure 9,569 ms en p50. La préparation des données devient donc le principal goulot mesuré dans le chemin de prédiction.
+- L'artefact ONNX est plus compact : 443 ko contre 720 ko pour le modèle joblib.
+- `protobuf` est épinglé à la version 6.33.5 dans `requirements-optim.txt` et `tests/test_onnx.py` vérifie l'export et la cohérence des prédictions.
+- Les mesures présentées sont locales. La capacité sous le SLO avec ONNX doit encore être remesurée avec les mêmes paliers Locust avant de conclure sur la capacité de service.
