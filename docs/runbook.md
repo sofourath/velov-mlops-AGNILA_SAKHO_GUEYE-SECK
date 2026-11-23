@@ -1,108 +1,86 @@
 # Runbook : API velov-availability
 
-Ce runbook couvre l'API FastAPI, PostgreSQL, MLflow et le flow Prefect sur la VM Linux.
-Les chemins ci-dessous supposent un clone sous `/opt/velov` et un environnement virtuel `.venv`.
+> Template à compléter au fil des sessions. Public cible : une personne d'astreinte
+> qui ne connaît pas le projet et doit rétablir le service à 3 h du matin.
 
-## 1. Démarrer / arrêter
+## 1. Vue d'ensemble
+- Ce que fait le service, en deux phrases :
+- Schéma d'architecture (lien) :
+- Dépendances (base de données, stockage du modèle...) :
 
+## 2. Démarrer / arrêter
 ```bash
-cd /opt/velov
-docker compose -f compose.yaml -f compose.mlflow.yaml up -d --build
-docker compose -f compose.yaml -f compose.mlflow.yaml ps
-docker compose -f compose.yaml -f compose.mlflow.yaml down
+# démarrer
+# arrêter
+# redémarrer un seul service
 ```
 
-L'API lit le bundle dans le dossier hôte `models/`, monté en lecture seule dans son conteneur.
-Ne lancez pas `down -v` sauf si vous souhaitez aussi supprimer les données PostgreSQL et les artefacts MLflow.
-
-## 2. Vérifier le service
-
+## 3. Vérifier que tout va bien
 | Vérification | Commande | Résultat attendu |
 |---|---|---|
-| Liveness | `curl --fail http://127.0.0.1:8000/health` | `{"status":"ok"}` |
-| Readiness et modèle courant | `curl --fail http://127.0.0.1:8000/ready` | HTTP 200 et `model_version` |
-| Serveur MLflow | `curl --fail http://127.0.0.1:5000/version` | Version MLflow |
-| État Docker | `docker compose ps` | API et db `healthy` / `running` |
+| Le process répond | `curl -s http://<hôte>:8000/health` | `{"status":"ok"}` |
+| Le modèle est chargé | `curl -s http://<hôte>:8000/ready` | HTTP 200 + version |
+| | | |
 
-Logs utiles :
+## 4. Incidents connus
+| Symptôme | Cause probable | Diagnostic | Action |
+|---|---|---|---|
+| `/ready` renvoie 503 | | | |
+| Le conteneur redémarre en boucle | | | |
+| Latence élevée | Saturation CPU / trop de requêtes concurrentes | Vérifier le p95 Locust, `X-Process-Time-Ms` et `docker stats` | Réduire la charge, puis tester la configuration à 2 workers / 2 CPU ; si le SLO reste dépassé, revenir à une charge inférieure |
 
-```bash
-docker compose logs --tail=100 api
-docker compose -f compose.yaml -f compose.mlflow.yaml logs --tail=100 mlflow
-docker compose logs --tail=100 db
-```
+### SLO et capacité mesurée — EX-16
 
-## 3. Planification Prefect
+SLO : au moins 95 % des requêtes `POST /v1/predict` doivent répondre en moins de 200 ms, avec un taux d'erreur inférieur à 1 %.
 
-Installer les dépendances de développement et d'orchestration sur la VM, puis conserver les deux processus Prefect
-(serveur et déploiement) sous un gestionnaire de services tel que systemd :
+Les tests de charge ont été réalisés localement avec Locust.
 
-```bash
-cd /opt/velov
-. .venv/bin/activate
-pip install -r requirements-dev.txt -r requirements-orchestration.txt
-export PREFECT_API_URL=http://127.0.0.1:4200/api
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
-prefect server start --host 127.0.0.1
-```
+Avec 1 worker / 1 CPU, aucun des paliers testés à 10, 25, 50, 100 et 150 utilisateurs ne respecte le SLO.
 
-Dans un second service/terminal, avec les mêmes variables d'environnement :
+Avec 2 workers / 2 CPU, aucun de ces mêmes paliers ne respecte non plus le SLO.
 
-```bash
-cd /opt/velov
-. .venv/bin/activate
-export PREFECT_API_URL=http://127.0.0.1:4200/api
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
-python -m velov.flow
-```
+La capacité sous SLO n'a donc pas été atteinte dans la plage testée : elle est inférieure au premier palier de 10 utilisateurs dans ce protocole.
 
-Le flow s'exécute chaque lundi à 03:00 UTC : ingestion synthétique de 90 jours, `dbt build`,
-entraînement et enregistrement de l'alias `challenger`. Il ne promeut pas le modèle
-automatiquement. Vérifier les métriques du run et lancer la promotion seulement si le test
-porte sur la même fenêtre que le champion :
+Près du plafond :
+- surveiller le p95 et le taux d'erreur ;
+- vérifier la saturation CPU avec `docker stats` ;
+- comparer `X-Process-Time-Ms` avec la latence Locust ;
+- si le CPU est saturé, tester une augmentation contrôlée du nombre de workers et de CPU ;
+- remesurer avec exactement le même protocole avant de conserver la modification.
 
-```bash
-python -m velov.tracking promote
-```
+## 5. Déployer une nouvelle version du modèle — EX-18
 
-Après promotion, l'alias `previous-champion` conserve le modèle précédent.
+### Stratégie de remplacement
 
-## 4. Déployer / revenir en arrière
+Une nouvelle version du modèle ne doit pas remplacer immédiatement la version actuellement servie.
 
-Sur la VM, avec `MLFLOW_TRACKING_URI` pointant sur le serveur MLflow :
+Avant promotion :
 
-```bash
-cd /opt/velov
-. .venv/bin/activate
-python -m velov.deploy --alias champion --model-dir models
-docker compose up -d --force-recreate api
-curl --fail http://127.0.0.1:8000/ready
-```
+1. vérifier que les tests automatisés passent ;
+2. vérifier les métriques du nouveau modèle ;
+3. comparer ses prédictions avec celles de la version de référence ;
+4. mesurer sa latence avec le même protocole de benchmark ;
+5. vérifier que le SLO de l'API reste respecté.
 
-L'outil vérifie l'empreinte SHA-256 du bundle avant remplacement et garde une copie locale
-datée. Si `/ready` échoue ou si les prédictions ne sont pas conformes, restaurer le précédent
-champion du registre puis recréer le conteneur :
+### Signaux et seuils de retour arrière
+
+Déclencher un retour arrière si l'un des critères suivants est observé après déploiement :
+
+- `/ready` renvoie HTTP 503 ;
+- le taux d'erreur de `/v1/predict` atteint ou dépasse 1 % ;
+- le p95 de `/v1/predict` dépasse 200 ms ;
+- le nouveau modèle présente une régression de qualité par rapport au modèle validé ;
+- le service devient instable ou le conteneur redémarre de manière répétée.
+
+### Retour arrière (rollback)
+
+Revenir à la dernière version du modèle précédemment validée, puis redémarrer l'API et vérifier :
 
 ```bash
-python -m velov.deploy --alias previous-champion --model-dir models
-docker compose up -d --force-recreate api
-curl --fail http://127.0.0.1:8000/ready
+curl -s http://<hôte>:8000/health
+curl -s http://<hôte>:8000/ready
 ```
+Après le rollback, relancer un test de prédiction et vérifier que le service respecte de nouveau le SLO avant de considérer l'incident comme résolu.
 
-Le rollback par alias est disponible après une promotion qui a remplacé un champion existant.
-Pour le tout premier champion, il n'existe pas encore d'alias `previous-champion`.
-
-## 5. Incidents connus
-
-| Symptôme | Cause probable | Diagnostic / action |
-|---|---|---|
-| `/ready` renvoie 503 | Bundle absent, empreinte incorrecte ou modèle incompatible | Vérifier `models/metadata.json`, l'artefact référencé et `docker compose logs api`; redéployer un alias connu |
-| API indisponible après redémarrage | Conteneur/API ou PostgreSQL en erreur | `docker compose ps` puis `docker compose logs --tail=100 api db` |
-| Déploiement d'alias échoue | Alias manquant, URI MLflow incorrecte ou bundle absent du run | Vérifier `MLFLOW_TRACKING_URI`, l'alias et les artefacts `package/` du run MLflow |
-| Pas de nouveau challenger Prefect | Service Prefect arrêté ou tâche en échec | Vérifier les deux services Prefect, l'API à `127.0.0.1:4200/api` et les logs du flow |
-
-## 6. Accès GitHub
-
-Dans Settings → Branches, protéger `main`, exiger une pull request et les checks `lint`,
-`tests`, `gitleaks` et `image`. Ces paramètres doivent être activés avec un compte ayant les
-droits d'administration du dépôt ; le workflow ne peut pas les imposer lui-même.
+## 6. Contacts et escalade
+-

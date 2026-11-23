@@ -22,3 +22,6 @@ mlruns/
 
 *.egg-info/
 dbt/logs/
+results/**/*_stats_history.csv
+results/**/*_failures.csv
+results/**/*_exceptions.csv

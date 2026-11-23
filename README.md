@@ -99,6 +99,22 @@ curl -X POST http://127.0.0.1:8000/v1/predict \
 Le `timestamp` doit porter un fuseau (`+02:00`, `Z`...) : sans fuseau, l'API répond 422.
 Les instants sont renvoyés et journalisés en UTC (`"target_timestamp": "2026-10-06T07:00:00Z"`).
 
+## Performance — TP5
+
+### TP5a — DistilBERT float32 vs int8
+
+Protocole local : PyTorch CPU, 1 thread, une phrase de 128 tokens, 20 itérations d’échauffement, 200 mesures de latence.
+La précision est mesurée sur les 872 phrases de validation SST-2.
+
+| Variante | Taille Mo | p50 ms | p95 ms | Précision SST-2 | Accord avec float32 | Écart max logits |
+|---|---:|---:|---:|---:|---:|---:|
+| float32 | 268 | 278 | 351 | 0.911 | 1.000 | 0.000 |
+| int8 torch.ao | 139 | 146 | 158 | 0.896 | 0.958 | 4.499 |
+
+La quantification dynamique `torch.ao` réduit presque de moitié la taille du modèle (268 Mo à 139 Mo) et améliore nettement la latence sur cette machine, avec un p50 passant de 278 ms à 146 ms et un p95 de 351 ms à 158 ms. En contrepartie, la précision SST-2 baisse légèrement de 91,1 % à 89,6 %, avec un accord de 95,8 % avec le modèle float32.
+
+La variante `torchao` a également été testée sur la même machine. Elle produit un modèle de 139 Mo mais s’est révélée très lente sur cette configuration Windows/CPU : sur un test court de 20 phrases et 20 mesures de latence, le p50 était d’environ 17 080 ms et le p95 d’environ 19 371 ms. Ces valeurs ne sont donc pas directement comparables au benchmark complet sur 872 phrases, mais montrent que le gain de taille lié à l’int8 ne garantit pas un gain de latence : le résultat dépend fortement du backend et du matériel.
+
 ## Exigences du projet
 
 Le service doit respecter les exigences de [docs/exigences.md](docs/exigences.md), de S1 à S9.
